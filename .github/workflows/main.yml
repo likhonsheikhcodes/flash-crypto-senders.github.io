@@ -17,17 +17,18 @@ jobs:
     steps:
     - uses: actions/checkout@v2
       with:
-        fetch-depth: 2
+        fetch-depth: 0
 
     - name: Check for file changes
       id: file_changes
       run: |
-        CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+        git fetch origin main
+        CHANGED_FILES=$(git diff --name-only origin/main HEAD)
         if [[ -n "$CHANGED_FILES" ]]; then
-          echo "::set-output name=changes::true"
-          echo "::set-output name=files::$CHANGED_FILES"
+          echo "changes=true" >> $GITHUB_OUTPUT
+          echo "files=$CHANGED_FILES" >> $GITHUB_OUTPUT
         else
-          echo "::set-output name=changes::false"
+          echo "changes=false" >> $GITHUB_OUTPUT
         fi
 
     - name: Update updates.txt
@@ -40,14 +41,16 @@ jobs:
         sed -i '6,$d' updates.txt      # Keep only the last 5 lines
         sed -i '1!G;h;$p' updates.txt  # Reverse the file back
 
-    - name: Commit updates.txt changes
+    - name: Commit and push updates.txt changes
       if: steps.file_changes.outputs.changes == 'true'
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add updates.txt
         git commit -m "Update updates.txt with latest changes"
-        git push
+        git fetch origin main
+        git rebase origin/main
+        git push --force-with-lease origin main
 
     - name: Generate update message
       id: update_msg
@@ -74,7 +77,9 @@ jobs:
         EOF
         )
         
-        echo "::set-output name=message::$MESSAGE"
+        echo "message<<EOF" >> $GITHUB_OUTPUT
+        echo "$MESSAGE" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
 
     - name: Update Telegram post
       run: |
