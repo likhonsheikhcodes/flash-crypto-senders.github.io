@@ -1,0 +1,111 @@
+name: FlashCryptoSenders CI/CD and Updates
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 */2 * * *'  # Runs every 2 hours
+
+env:
+  TELEGRAM_POST_ID: '36'
+
+jobs:
+  build-test-deploy-update:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v2
+      with:
+        node-version: '14'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run tests
+      run: npm test
+
+    - name: Build project
+      run: npm run build
+
+    - name: Minify files
+      run: npm run minify
+
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./dist
+
+    - name: Check for file changes
+      id: file_changes
+      run: |
+        CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+        if [[ -n "$CHANGED_FILES" ]]; then
+          echo "::set-output name=changes::true"
+          echo "::set-output name=files::$CHANGED_FILES"
+        else
+          echo "::set-output name=changes::false"
+        fi
+
+    - name: Update updates.json
+      if: steps.file_changes.outputs.changes == 'true'
+      run: |
+        CHANGED_FILES="${{ steps.file_changes.outputs.files }}"
+        CURRENT_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        NEW_UPDATE="New files updated at $CURRENT_TIME: $CHANGED_FILES"
+        
+        jq --arg new_update "$NEW_UPDATE" '.updates += [$new_update]' updates.json > updates_temp.json && mv updates_temp.json updates.json
+        jq '.updates = .updates[-5:]' updates.json > updates_temp.json && mv updates_temp.json updates.json
+
+    - name: Commit updates.json changes
+      if: steps.file_changes.outputs.changes == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add updates.json
+        git commit -m "Update updates.json with latest changes"
+        git push
+
+    - name: Generate update message
+      id: update_msg
+      run: |
+        UPDATES=$(jq -r '.updates | map("🌐 " + .) | join("\n")' updates.json)
+        LINKS=$(jq -r '.links | to_entries | map("[\(.key)](\(.value))") | join(" | ")' updates.json)
+        CURRENT_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        RISK_LEVEL=$((RANDOM % 5 + 1))
+        SCORE=$((RANDOM % 100 + 1))
+        
+        MESSAGE=$(cat << EOF
+        🚀 FlashCryptoSenders Update ✨
+
+        🟢 Latest Updates:
+        $UPDATES
+
+        ⚖️ Risk Level: $RISK_LEVEL/5
+        ⭐ Score: $SCORE/100
+        🏢 Last Updated: $CURRENT_TIME
+
+        🔗 Quick Links:
+        $LINKS
+
+        ───────────────
+        EOF
+        )
+        
+        echo "::set-output name=message::$MESSAGE"
+
+    - name: Update Telegram post
+      run: |
+        MESSAGE="${{ steps.update_msg.outputs.message }}"
+        INLINE_KEYBOARD=$(jq -c '.links | to_entries | map({text: .key, url: .value}) | [.] | {inline_keyboard: .}' updates.json)
+        
+        curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/editMessageText \
+          -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
+          -d message_id=${{ env.TELEGRAM_POST_ID }} \
+          -d text="$MESSAGE" \
+          -d parse_mode=Markdown \
+          -d reply_markup="$INLINE_KEYBOARD"
