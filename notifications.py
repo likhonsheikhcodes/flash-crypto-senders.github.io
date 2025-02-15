@@ -9,7 +9,7 @@ from typing import Tuple, Dict, Any
 
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
-TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 def run_command(command: str) -> Tuple[str, str]:
     try:
@@ -72,11 +72,38 @@ def send_telegram_message(message: str) -> Dict[str, Any]:
         "parse_mode": "Markdown"
     }
     try:
-        response = requests.post(TELEGRAM_API_URL, json=payload, timeout=10)
+        response = requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload, timeout=10)
         response.raise_for_status()
         return response.json()
     except requests.RequestException as e:
         print(f"Error sending Telegram message: {e}")
+        return {"ok": False, "error": str(e)}
+
+def edit_telegram_message(message_id: int, new_message: str) -> Dict[str, Any]:
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "message_id": message_id,
+        "text": new_message,
+        "parse_mode": "Markdown"
+    }
+    try:
+        response = requests.post(f"{TELEGRAM_API_URL}/editMessageText", json=payload, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        print(f"Error editing Telegram message: {e}")
+        return {"ok": False, "error": str(e)}
+
+def get_channel_posts() -> Dict[str, Any]:
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID
+    }
+    try:
+        response = requests.post(f"{TELEGRAM_API_URL}/getChat", json=payload, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        print(f"Error getting channel posts: {e}")
         return {"ok": False, "error": str(e)}
 
 def main():
@@ -84,7 +111,11 @@ def main():
     title, content = generate_article()
     post_id = create_html_article(title, content)
 
-    message = f"""
+    # Fetch recent posts to find the target message ID
+    posts_info = get_channel_posts()
+    message_id = posts_info["result"]["pinned_message"]["message_id"]
+
+    new_message = f"""
 🚀 FlashCryptoSenders Update ✨
 
 🟢 Latest Changes:
@@ -101,7 +132,7 @@ def main():
 [Website](https://flashcrypto.vercel.app/) | [GitHub](https://github.com/flash-crypto-senders) | [Telegram](https://t.me/RecentCoders) | [Documentation](https://flashcrypto.vercel.app/docs) | [Support](https://flashcrypto.vercel.app/support)
     """
 
-    response = send_telegram_message(message)
+    response = edit_telegram_message(message_id, new_message)
     print(f"Telegram API response: {json.dumps(response, indent=2)}")
 
 if __name__ == "__main__":
