@@ -1,102 +1,56 @@
-name: FlashCryptoSenders CI/CD and Updates
+name: FlashCryptoSenders CI/CD and Notifications
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   schedule:
     - cron: '0 */2 * * *'  # Runs every 2 hours
 
-env:
-  TELEGRAM_POST_ID: '36'
-
 jobs:
-  build-and-update:
+  build-and-notify:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - name: Checkout repository
+      uses: actions/checkout@v3
       with:
         fetch-depth: 0
 
-    - name: Check for file changes
-      id: file_changes
-      run: |
-        git fetch origin main
-        CHANGED_FILES=$(git diff --name-only origin/main HEAD)
-        if [[ -n "$CHANGED_FILES" ]]; then
-          echo "changes=true" >> $GITHUB_OUTPUT
-          echo "files=$CHANGED_FILES" >> $GITHUB_OUTPUT
-        else
-          echo "changes=false" >> $GITHUB_OUTPUT
-        fi
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
 
-    - name: Update updates.txt
-      if: steps.file_changes.outputs.changes == 'true'
-      run: |
-        CHANGED_FILES="${{ steps.file_changes.outputs.files }}"
-        CURRENT_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-        echo "New files updated at $CURRENT_TIME: $CHANGED_FILES" >> updates.txt
-        sed -i '1!G;h;$p' updates.txt  # Reverse the file
-        sed -i '6,$d' updates.txt      # Keep only the last 5 lines
-        sed -i '1!G;h;$p' updates.txt  # Reverse the file back
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
 
-    - name: Commit and push updates.txt changes
-      if: steps.file_changes.outputs.changes == 'true'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run notification script
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: python notifications.py
+
+    - name: Commit and push changes
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add updates.txt
-        git commit -m "Update updates.txt with latest changes"
-        git fetch origin main
-        git rebase origin/main
-        git push --force-with-lease origin main
+        git add articles/
+        git commit -m "Add new article" || echo "No changes to commit"
+        git push
 
-    - name: Generate update message
-      id: update_msg
-      run: |
-        UPDATES=$(cat updates.txt | sed 's/^/🌐 /')
-        CURRENT_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-        RISK_LEVEL=$((RANDOM % 5 + 1))
-        SCORE=$((RANDOM % 100 + 1))
-        
-        MESSAGE=$(cat << EOF
-        🚀 FlashCryptoSenders Update ✨
-
-        🟢 Latest Updates:
-        $UPDATES
-
-        ⚖️ Risk Level: $RISK_LEVEL/5
-        ⭐ Score: $SCORE/100
-        🏢 Last Updated: $CURRENT_TIME
-
-        🔗 Quick Links:
-        [Website](https://flashcrypto.vercel.app/) | [GitHub](https://github.com/flash-crypto-senders) | [Telegram](https://t.me/RecentCoders) | [Documentation](https://flashcrypto.vercel.app/docs) | [Support](https://flashcrypto.vercel.app/support)
-
-        ───────────────
-        EOF
-        )
-        
-        echo "message<<EOF" >> $GITHUB_OUTPUT
-        echo "$MESSAGE" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-
-    - name: Update Telegram post
-      run: |
-        MESSAGE="${{ steps.update_msg.outputs.message }}"
-        INLINE_KEYBOARD='{
-          "inline_keyboard": [[
-            {"text": "Website", "url": "https://flashcrypto.vercel.app/"},
-            {"text": "GitHub", "url": "https://github.com/flash-crypto-senders"},
-            {"text": "Telegram", "url": "https://t.me/RecentCoders"},
-            {"text": "Docs", "url": "https://flashcrypto.vercel.app/docs"},
-            {"text": "Support", "url": "https://flashcrypto.vercel.app/support"}
-          ]]
-        }'
-        
-        curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/editMessageText \
-          -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
-          -d message_id=${{ env.TELEGRAM_POST_ID }} \
-          -d text="$MESSAGE" \
-          -d parse_mode=Markdown \
-          -d reply_markup="$INLINE_KEYBOARD"
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: generated-articles
+        path: articles/
