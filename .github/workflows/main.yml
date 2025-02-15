@@ -12,33 +12,12 @@ env:
   TELEGRAM_POST_ID: '36'
 
 jobs:
-  build-test-deploy-update:
+  build-and-update:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v2
       with:
-        node-version: '14'
-
-    - name: Install dependencies
-      run: npm ci
-
-    - name: Run tests
-      run: npm test
-
-    - name: Build project
-      run: npm run build
-
-    - name: Minify files
-      run: npm run minify
-
-    - name: Deploy to GitHub Pages
-      uses: peaceiris/actions-gh-pages@v3
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./dist
+        fetch-depth: 2
 
     - name: Check for file changes
       id: file_changes
@@ -51,30 +30,29 @@ jobs:
           echo "::set-output name=changes::false"
         fi
 
-    - name: Update updates.json
+    - name: Update updates.txt
       if: steps.file_changes.outputs.changes == 'true'
       run: |
         CHANGED_FILES="${{ steps.file_changes.outputs.files }}"
         CURRENT_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-        NEW_UPDATE="New files updated at $CURRENT_TIME: $CHANGED_FILES"
-        
-        jq --arg new_update "$NEW_UPDATE" '.updates += [$new_update]' updates.json > updates_temp.json && mv updates_temp.json updates.json
-        jq '.updates = .updates[-5:]' updates.json > updates_temp.json && mv updates_temp.json updates.json
+        echo "New files updated at $CURRENT_TIME: $CHANGED_FILES" >> updates.txt
+        sed -i '1!G;h;$p' updates.txt  # Reverse the file
+        sed -i '6,$d' updates.txt      # Keep only the last 5 lines
+        sed -i '1!G;h;$p' updates.txt  # Reverse the file back
 
-    - name: Commit updates.json changes
+    - name: Commit updates.txt changes
       if: steps.file_changes.outputs.changes == 'true'
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add updates.json
-        git commit -m "Update updates.json with latest changes"
+        git add updates.txt
+        git commit -m "Update updates.txt with latest changes"
         git push
 
     - name: Generate update message
       id: update_msg
       run: |
-        UPDATES=$(jq -r '.updates | map("🌐 " + .) | join("\n")' updates.json)
-        LINKS=$(jq -r '.links | to_entries | map("[\(.key)](\(.value))") | join(" | ")' updates.json)
+        UPDATES=$(cat updates.txt | sed 's/^/🌐 /')
         CURRENT_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
         RISK_LEVEL=$((RANDOM % 5 + 1))
         SCORE=$((RANDOM % 100 + 1))
@@ -90,7 +68,7 @@ jobs:
         🏢 Last Updated: $CURRENT_TIME
 
         🔗 Quick Links:
-        $LINKS
+        [Website](https://flashcrypto.vercel.app/) | [GitHub](https://github.com/flash-crypto-senders) | [Telegram](https://t.me/RecentCoders) | [Documentation](https://flashcrypto.vercel.app/docs) | [Support](https://flashcrypto.vercel.app/support)
 
         ───────────────
         EOF
@@ -101,7 +79,15 @@ jobs:
     - name: Update Telegram post
       run: |
         MESSAGE="${{ steps.update_msg.outputs.message }}"
-        INLINE_KEYBOARD=$(jq -c '.links | to_entries | map({text: .key, url: .value}) | [.] | {inline_keyboard: .}' updates.json)
+        INLINE_KEYBOARD='{
+          "inline_keyboard": [[
+            {"text": "Website", "url": "https://flashcrypto.vercel.app/"},
+            {"text": "GitHub", "url": "https://github.com/flash-crypto-senders"},
+            {"text": "Telegram", "url": "https://t.me/RecentCoders"},
+            {"text": "Docs", "url": "https://flashcrypto.vercel.app/docs"},
+            {"text": "Support", "url": "https://flashcrypto.vercel.app/support"}
+          ]]
+        }'
         
         curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/editMessageText \
           -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
